@@ -12,7 +12,8 @@ from threading import Thread
 from config_sender import configurations
 from search import base_optimizer, hill_climb, cg_opt, gradient_opt_fast, gradient_multivariate
 from utils import tcp_stats, run, available_space, get_dir_size
-from ppo import SimulatorState, NetworkOptimizationEnv, PPOAgentContinuous, load_model, train_ppo
+from ppo import NetworkOptimizationEnv, PPOAgentContinuous, load_model, train_ppo
+from fpp_simulator import SimulatorState
 import contextlib
 
 warnings.filterwarnings("ignore", category=FutureWarning)

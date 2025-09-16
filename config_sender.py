@@ -8,6 +8,7 @@ configurations = {
         "port": 5003
     },
     "rpc_port":"5002",
+    "max_file_chunk_in_MB": 512, # MB
     "data_dir": "/mnt/nvme0n1/src/",
     "B": 10, # severity of the packet loss punishment
     "K": 1.02, # cost of increasing concurrency

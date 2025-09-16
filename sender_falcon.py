@@ -22,6 +22,9 @@ from reasoner import PolicyLLM, apply_caps, ollama_json_generator
 from utils import tcp_stats, get_dir_size
 from memory import SAOMemory
 import math
+from ppo import PPOAgentContinuous, train_ppo, load_model, NetworkOptimizationEnv
+from fpp_simulator import SimulatorState
+
 warnings.filterwarnings("ignore", category=FutureWarning)
 configurations["cpu_count"] = mp.cpu_count()
 configurations["thread_limit"] = min(max(1,configurations["max_cc"]['network']), configurations["cpu_count"])
@@ -314,11 +317,7 @@ def normal_transfer(params):
 def run_transfer():
     params = [2]
 
-    if configurations["method"].lower() == "llm":
-            log.info("Running llm Optimization .... ")
-            optimizer = LLMOptimizer()
-
-    elif configurations["method"].lower() == "brute":
+    if configurations["method"].lower() == "brute":
         log.info("Running Brute Force Optimization .... ")
         params = brute_force(configurations, sample_transfer, log)
 
@@ -347,181 +346,128 @@ def run_transfer():
         normal_transfer(params)
 
 
-class LLMOptimizer:
+class PPOOptimizer:
     def __init__(self):
         self.prev_network_throughput = 0
         self.prev_network_thread = 2
         self.prev_reward = 0
-        # self.used_disk = get_dir_size(log, tmpfs_dir)
         self.current_network_thread = 2
         self.current_network_throughput = 0
         self.current_reward = 0
+
+        oneGB = 1024
+        self.optimal_network_thread = 5
 
         self.utility_network = 0
 
         self.K = configurations["K"]
 
-        self.policy = PolicyLLM(generate_func=ollama_json_generator("driaforall/tiny-agent-a:0.5b"))
-        self.caps = BoundedDelta()  # uses your config caps
-        self.memory = SAOMemory(maxlen=5, summary_every=3)
+        self.history_length = 3
+        self.obs_dim = 5 + 7 * self.history_length
 
-        print("=== LLM OPTIMIZER (OBSERVE→REASON→ACT→EVALUATE) ===")
-        self.optimize(log, verbose=True)
-    
-    def optimize(self, logger, verbose=True):
-        print("Starting LLM Optimize Loop")
-        st = self.get_state(is_start=True)
-        action=Action(concurrency_network=self.current_network_thread)
-        while True:
-            # ACT (stub)
-            print(f"[ACT] Applying -> network={action.concurrency_network}")
-            perf_u, Tr, Tn, Tw = self.get_reward([action.concurrency_network, action.concurrency_network, action.concurrency_network])
-            if perf_u == exit_signal or Tr == exit_signal or Tn == exit_signal or Tw == exit_signal:
-                break
-            delta = 0.0 if st.last_reward is None else (perf_u - st.last_reward)
-            print(f"[EVALUATE] Tr={Tr:.2f}MB/s Tn={Tn:.2f}MB/s Tw={Tw:.2f}MB/s  "
-                f"U={perf_u:.2f}  Δ={delta:.2f}")
+        state = self.get_state(is_start=True)
 
-            # Log SAO
-            st.history.append(
-                SAO(
-                    sender_state=st.sender_state_snapshot,
-                    action=action,
-                    throughputs=Throughput(Tn=Tn),
-                    utility=perf_u,
-                )
-            )
-            history_window = 3
-            if len(st.history) > history_window:
-                st.history = st.history[-history_window:]
-            self.memory.append(st.history[-1])
-            st.last_action = action
-            st.last_reward = perf_u
 
-            st = self.get_state(history=st.history)
+        self.env = NetworkOptimizationEnv(black_box_function=self.get_reward, state=state, history_length=self.history_length)
+        self.agent = PPOAgentContinuous(state_dim=8, action_dim=3, lr=1e-4, eps_clip=0.1)
 
-            # REASON
-            print("Inside LLM Optimize Loop")
-            t0 = time.time()
-            proposal = self.policy.propose(st.sender_state_snapshot, st.last_action, st.last_reward, self.memory)
-            t1 = time.time()
-            print(f"[REASON] LLM response time: {t1 - t0:.2f}s")
-            action = apply_caps(proposal, st.last_action, self.caps)
-            print(f"[REASON] proposal={proposal.model_dump()} → capped={action.model_dump()}")
+        policy_model = ""
+        value_model = ""
+        is_inference = False
+        is_random = False
 
-        return -1
+        if configurations['mode'] == 'inference':
+            is_inference = True
+            policy_model = configurations['inference_policy_model']
+            value_model = configurations['inference_value_model']
+        else:
+            is_random = True
 
-    def get_state(self, is_start=False, history=[]):
-        network_thread = self.current_network_thread
-        read_thread = self.current_network_thread
-        write_thread = self.current_network_thread
+        if not is_random:
+            load_model(self.agent, policy_model, value_model)
+        log.info(f"Model loaded successfully. Value: {value_model}, Policy: {policy_model}")
 
+        rewards = train_ppo(self.env, self.agent, max_episodes=configurations['max_episodes'], is_inference = is_inference, is_random = is_random)
+
+    def get_state(self, is_start=False):
         network_thrpt = self.current_network_throughput
-        read_thrpt = self.current_network_throughput
-        write_thrpt = self.current_network_throughput
-        # free_disk = (memory_limit - self.used_disk) # NEED TO INTEGRATE LATER w throughputs######
-        sender_metrics = collect_metrics(
-            sport=None,
-            dport=None,
-            iface=None,
-            exclude_names=["automdt"],
-            debug=True
-        )
-        if is_start:
-            receiver_metrics = sender_metrics ###NEEDED TO BE FIXED LATER
-        print("Throughputs -- I/O: {0}, Network: {1}, Write: {2}".format(read_thrpt, network_thrpt, write_thrpt))
-        print(sender_metrics)    
+        network_thread = self.current_network_thread
+
+
+        state = SimulatorState(network_throughput=network_thrpt,
+                               network_thread=network_thread
+                               )
+        return state
+
+    def ppo_probing(self, params):
+        global network_throughput_logs, exit_signal, rQueue, tQueue, file_processed, file_count
+
+        if file_processed.value == file_count:
+            log.info("Exiting Write 464")
+            return [exit_signal]
         
-        sender_snapshot = snapshot_from_schema2(sender_metrics)
-        receiver_snapshot = snapshot_from_schema2(sender_metrics)
+        network_thread = params[0]
 
-        st = AgentState(
-            sender_state_snapshot=sender_snapshot,
-            receiver_state_snapshot=receiver_snapshot,
-            last_action=Action(concurrency_read=read_thread, concurrency_network=network_thread, concurrency_write=write_thread),
-            last_reward=self.current_reward,
-            history=history,
-        )
-        return st
-    
-    def llm_transfer(self, params):
-        print("Inside LLM Transfer")
-        global throughput_logs, exit_signal
-
-        if file_incomplete.value == 0:
-            print("Exiting LLM Transfer")
-            return [exit_signal, None]
-
-        params = [1 if x<1 else int(np.round(x)) for x in params]
-        log.info("Sample Transfer -- Probing Parameters: {0}".format(params))
-        num_workers.value = params[0]
-
-        current_cc = np.sum(process_status)
-        for i in range(configurations["thread_limit"]):
-            if i < params[0]:
-                if (i >= current_cc):
-                    process_status[i] = 1
-            else:
-                process_status[i] = 0
-
-        log.debug("Active CC: {0}".format(np.sum(process_status)))
+        log.info("Probing Parameters - [Network]: {0}, {1}, {2}".format(network_thread))
+        
+        for i in range(len(transfer_process_status)):
+            transfer_process_status[i] = 1 if (i < network_thread and file_processed.value<file_count) else 0
 
         time.sleep(1)
-        prev_sc, prev_rc = tcp_stats()
-        n_time = time.time() + probing_time - 1.1
-        # time.sleep(n_time)
-        while (time.time() < n_time) and (file_incomplete.value > 0):
+
+        # Before
+        prev_sc, prev_rc = tcp_stats(RCVR_ADDR, log)
+        n_time = time.time() + probing_time - 1.05
+        while (time.time() < n_time) and (file_processed.value < file_count):
             time.sleep(0.1)
 
-        curr_sc, curr_rc = tcp_stats()
+        # After
+        curr_sc, curr_rc = tcp_stats(RCVR_ADDR, log)
         sc, rc = curr_sc - prev_sc, curr_rc - prev_rc
-
         log.debug("TCP Segments >> Send Count: {0}, Retrans Count: {1}".format(sc, rc))
-        thrpt = np.mean(throughput_logs[-2:]) if len(throughput_logs) > 2 else 0
 
+        ## Network Score
+        net_thrpt = np.round(np.mean(network_throughput_logs[-2:])) if len(network_throughput_logs) > 2 else 0
         lr, B, K = 0, int(configurations["B"]), float(configurations["K"])
-        if sc != 0:
-            lr = rc/sc if sc>rc else 0
 
-        # score = thrpt
-        plr_impact = B*lr
-        # cc_impact_lin = (K-1) * num_workers.value
-        # score = thrpt * (1- plr_impact - cc_impact_lin)
-        cc_impact_nl = K**num_workers.value
-        score = (thrpt/cc_impact_nl) - (thrpt * plr_impact)
-        score_value = np.round(score * (-1))
+        if file_processed.value == file_count:
+            return [exit_signal]
 
-        log.info("Sample Transfer -- Throughput: {0}Mbps, Loss Rate: {1}%, Score: {2}".format(
-            np.round(thrpt), np.round(lr*100, 2), score_value))
+        return [net_thrpt] #score_value
 
-        if file_incomplete.value == 0:
-            return [exit_signal, None]
-        else:
-            return [score_value, thrpt]
-    
     def get_reward(self, params):
-        utility, net_thrpt = self.llm_transfer(params)
-        io_thrpt, write_thrpt = net_thrpt, net_thrpt
-        read_thread, network_thread, write_thread = map(int, params)
+        net_thrpt = self.ppo_probing(params)
+        network_thread = params[0]
 
-        log.info(f"Throughputs -- I/O: {io_thrpt}, Network: {net_thrpt}, Write: {write_thrpt}")
+        log.info(f"Throughputs -- Network: {net_thrpt}")
 
-        if io_thrpt == exit_signal or write_thrpt == exit_signal:
-            return exit_signal, None, None, None
+        if net_thrpt == exit_signal:
+            return exit_signal, None
 
         self.prev_network_thread = self.current_network_thread
         self.prev_network_throughput = self.current_network_throughput
         self.prev_reward = self.current_reward
-        
-        
         self.current_network_thread = network_thread
         self.current_network_throughput = net_thrpt
-        # self.used_disk = used_disk
 
-        self.current_reward = utility
 
-        return utility, self.current_network_throughput, self.current_network_throughput, self.current_network_throughput
- 
+        utility_network = (net_thrpt/self.K ** network_thread)
+
+        reward = utility_network
+        self.current_reward = reward
+
+
+        network_grad = (utility_network-self.utility_network)/(network_thread-self.prev_network_thread) if (network_thread-self.prev_network_thread) > 0 else 0
+        grads = [network_grad]
+        grads = np.array(grads, dtype=np.float32)
+
+        self.utility_network = utility_network
+
+        final_state = self.get_state()
+
+        return reward, final_state
+        
+
 def report_throughput(start_time):
     global throughput_logs
     previous_total = 0

@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import random
 from queue import PriorityQueue
 from config_sender import configurations
+from fpp_simulator import SimulatorState
 
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -25,68 +26,22 @@ def load_model(agent, filename_policy, filename_value):
 
 exit_signal = 10 ** 10
 
-import copy
-class SimulatorState:
-    def __init__(self, sender_buffer_remaining_capacity=0, receiver_buffer_remaining_capacity=0,
-                 read_throughput=0, write_throughput=0, network_throughput=0,
-                 read_thread=0, write_thread=0, network_thread=0) -> None:
-        self.sender_buffer_remaining_capacity = sender_buffer_remaining_capacity
-        self.receiver_buffer_remaining_capacity = receiver_buffer_remaining_capacity
-        self.read_throughput = read_throughput
-        self.write_throughput = write_throughput
-        self.network_throughput = network_throughput
-        self.read_thread = read_thread
-        self.write_thread = write_thread
-        self.network_thread = network_thread
-
-    def copy(self):
-        # Return a new SimulatorState instance with the same attribute values
-        return SimulatorState(
-            sender_buffer_remaining_capacity=self.sender_buffer_remaining_capacity,
-            receiver_buffer_remaining_capacity=self.receiver_buffer_remaining_capacity,
-            read_throughput=self.read_throughput,
-            write_throughput=self.write_throughput,
-            network_throughput=self.network_throughput,
-            read_thread=self.read_thread,
-            write_thread=self.write_thread,
-            network_thread=self.network_thread
-        )
-
-    def to_array(self):
-        # Convert the state to a NumPy array
-        return np.array([
-            self.sender_buffer_remaining_capacity,
-            self.receiver_buffer_remaining_capacity,
-            self.read_throughput,
-            self.write_throughput,
-            self.network_throughput,
-            self.read_thread,
-            self.write_thread,
-            self.network_thread
-        ], dtype=np.float32)
-
 class NetworkOptimizationEnv(gym.Env):
     def __init__(self, black_box_function, state, history_length=5):
         super(NetworkOptimizationEnv, self).__init__()
         self.thread_limits = [1, configurations["max_cc"]["network"]]  # Threads can be between 1 and 10
 
         # Continuous action space: adjustments between -5.0 and +5.0
-        self.action_space = spaces.Box(low=np.array([self.thread_limits[0]] * 3),
-                               high=np.array([self.thread_limits[1]] * 3),
+        self.action_space = spaces.Box(low=np.array([self.thread_limits[0]]),
+                               high=np.array([self.thread_limits[1]]),
                                dtype=np.float32)
         
         oneGB = 1024
 
         self.observation_space = spaces.Box(
-            low=np.array([0, 0, 0, 0, 0, self.thread_limits[0], self.thread_limits[0], self.thread_limits[0]]),
+            low=np.array([0, self.thread_limits[0]]),
             high=np.array([
-                10 * oneGB,
-                10 * oneGB,
-                np.inf,  # Or maximum possible throughput values
                 np.inf,
-                np.inf,
-                self.thread_limits[1],
-                self.thread_limits[1],
                 self.thread_limits[1]
             ]),
             dtype=np.float32
@@ -106,10 +61,8 @@ class NetworkOptimizationEnv(gym.Env):
         new_thread_counts = np.clip(np.round(action), self.thread_limits[0], self.thread_limits[1]).astype(np.int32)
         
         if is_random:
-            read_thread = np.random.randint(5, self.thread_limits[1]-1)
             network_thread = np.random.randint(5, self.thread_limits[1]-1)
-            write_thread = np.random.randint(5, self.thread_limits[1]-1)
-            new_thread_counts = [read_thread, network_thread, write_thread]
+            new_thread_counts = [network_thread]
         
         # Compute utility and update state
         utility, self.state = self.get_utility_value(new_thread_counts)
@@ -122,10 +75,6 @@ class NetworkOptimizationEnv(gym.Env):
         penalty = 0
         if new_thread_counts[0] == self.thread_limits[0] or new_thread_counts[0] == self.thread_limits[1]:
             penalty -= 100  # Adjust penalty value as needed
-        if new_thread_counts[1] == self.thread_limits[0] or new_thread_counts[1] == self.thread_limits[1]:
-            penalty -= 100
-        if new_thread_counts[2] == self.thread_limits[0] or new_thread_counts[2] == self.thread_limits[1]:
-            penalty -= 100
 
         # Adjust reward
         reward = utility + penalty
@@ -141,18 +90,9 @@ class NetworkOptimizationEnv(gym.Env):
     
     def reset(self, is_inference = False):
         if not is_inference:
-            read_thread = np.random.randint(3, self.thread_limits[1]-1)
             network_thread = np.random.randint(3, self.thread_limits[1]-1)
-            write_thread = np.random.randint(3, self.thread_limits[1]-1)
-            sender_buffer_remaining_capacity = self.state.sender_buffer_remaining_capacity
-            receiver_buffer_remaining_capacity = self.state.receiver_buffer_remaining_capacity
-
             self.state = SimulatorState(
-                sender_buffer_remaining_capacity=sender_buffer_remaining_capacity,
-                receiver_buffer_remaining_capacity=receiver_buffer_remaining_capacity,
-                read_thread=read_thread,
                 network_thread=network_thread,
-                write_thread=write_thread,
             )
         
         self.current_step = 0
@@ -196,7 +136,7 @@ class PolicyNetworkContinuous(nn.Module):
                 nn.ReLU(),
                 nn.Linear(256, 256),
                 nn.LayerNorm(256)
-            ) for _ in range(3)
+            ) for _ in range(action_dim)
         ])
         
         self.mean_layer = nn.Linear(256, action_dim)
@@ -364,17 +304,3 @@ def train_ppo(env, agent, max_episodes=1000, is_inference=False, is_random=False
                     best_avg_reward = avg_reward
                     save_model(agent, "best_models/"+ configurations['model_version'] +"_finetune_policy.pth", "best_models/"+ configurations['model_version'] +"_finetune_value.pth")
     return total_rewards
-
-
-def plot_rewards(rewards, title, pdf_file):
-    plt.figure(figsize=(10, 6))
-    plt.plot(rewards)
-    plt.xlabel('Episode')
-    plt.ylabel('Total Reward')
-    plt.xlim(0, len(rewards))
-    plt.ylim(-1, 1)
-    plt.title(title)
-    plt.grid(True)
-    
-    plt.savefig(pdf_file)  
-    plt.close()

@@ -9,6 +9,7 @@ import matplotlib.pyplot as plt
 import random
 from queue import PriorityQueue
 from config_sender import configurations
+from fpp_simulator import NetworkSystemSimulator, SimulatorState
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
@@ -25,269 +26,13 @@ def load_model(agent, filename_policy, filename_value):
     agent.value_function.load_state_dict(torch.load(filename_value))
     print("Model loaded successfully.")
 
-class SimulatorState:
-    def __init__(self, sender_buffer_remaining_capacity=0, receiver_buffer_remaining_capacity=0,
-                 read_throughput=0, write_throughput=0, network_throughput=0,
-                 read_thread=0, write_thread=0, network_thread=0) -> None:
-        self.sender_buffer_remaining_capacity = sender_buffer_remaining_capacity
-        self.receiver_buffer_remaining_capacity = receiver_buffer_remaining_capacity
-        self.read_throughput = read_throughput
-        self.write_throughput = write_throughput
-        self.network_throughput = network_throughput
-        self.read_thread = read_thread
-        self.write_thread = write_thread
-        self.network_thread = network_thread
-
-    def copy(self):
-        # Return a new SimulatorState instance with the same attribute values
-        return SimulatorState(
-            sender_buffer_remaining_capacity=self.sender_buffer_remaining_capacity,
-            receiver_buffer_remaining_capacity=self.receiver_buffer_remaining_capacity,
-            read_throughput=self.read_throughput,
-            write_throughput=self.write_throughput,
-            network_throughput=self.network_throughput,
-            read_thread=self.read_thread,
-            write_thread=self.write_thread,
-            network_thread=self.network_thread
-        )
-
-    def to_array(self):
-        # Convert the state to a NumPy array
-        return np.array([
-            self.sender_buffer_remaining_capacity,
-            self.receiver_buffer_remaining_capacity,
-            self.read_throughput,
-            self.write_throughput,
-            self.network_throughput,
-            self.read_thread,
-            self.write_thread,
-            self.network_thread
-        ], dtype=np.float32)
-
-from typing_extensions import final
-class NetworkSystemSimulator:
-    def __init__(self, read_thread = 1, network_thread = 1, write_thread = 1, sender_buffer_capacity = 10, receiver_buffer_capacity = 10, read_throughput_per_thread = 3, write_throughput_per_thread = 1, network_throughput_per_thread = 2, read_bandwidth = 6, write_bandwidth = 6, network_bandwidth = 6, read_background_traffic = 0, write_background_traffic = 0, network_background_traffic = 0, track_states = False):
-        self.sender_buffer_capacity = sender_buffer_capacity
-        self.receiver_buffer_capacity = receiver_buffer_capacity
-        self.read_throughput_per_thread = read_throughput_per_thread
-        self.write_throughput_per_thread = write_throughput_per_thread
-        self.network_throughput_per_thread = network_throughput_per_thread
-        self.read_bandwidth = read_bandwidth
-        self.write_bandwidth = write_bandwidth
-        self.network_bandwidth = network_bandwidth
-        self.read_background_traffic = read_background_traffic
-        self.write_background_traffic = write_background_traffic
-        self.network_background_traffic = network_background_traffic
-        self.read_thread = read_thread
-        self.network_thread = network_thread
-        self.write_thread = write_thread
-        self.track_states = track_states
-        self.K = 1.02
-
-        # Initialize the buffers
-        self.sender_buffer_in_use = max(min(self.read_throughput_per_thread * read_thread - self.network_throughput_per_thread * self.network_thread, self.sender_buffer_capacity), 0)
-        self.receiver_buffer_in_use = max(min(self.network_throughput_per_thread * network_thread - self.write_throughput_per_thread * self.write_thread, self.receiver_buffer_capacity), 0)
-
-        print(f"Initial Sender Buffer: {self.sender_buffer_in_use}, Receiver Buffer: {self.receiver_buffer_in_use}")
-
-
-        # if self.track_states:
-        #     with open('optimizer_call_level_states.csv', 'w') as f:
-        #         f.write("Read Thread, Network Thread, Write Thread, Utility, Read Throughput, Sender Buffer, Network Throughput, Receiver Buffer, Write Throughput\n")
-
-        #     with open('thread_level_states.csv', 'w') as f:
-        #         f.write("Thread Type, Throughput, Sender Buffer, Receiver Buffer\n")
-        #         f.write(f"Initial, 0, {self.sender_buffer_in_use}, {self.receiver_buffer_in_use}\n")
-
-    def read_thread_task(self, time):
-        throughput_increase = 0
-        if self.sender_buffer_in_use < self.sender_buffer_capacity:
-            read_throughput_temp = min(self.read_throughput_per_thread, self.sender_buffer_capacity - self.sender_buffer_in_use)
-            throughput_increase = min(read_throughput_temp, self.read_bandwidth-self.read_throughput)
-            self.read_throughput += throughput_increase
-            self.sender_buffer_in_use += throughput_increase
-
-        time_taken = throughput_increase / self.read_throughput_per_thread
-        next_time = time + time_taken + 0.01
-        if next_time < 1:
-            self.thread_queue.put((next_time, "read"))
-
-        # if throughput_increase > 0 and self.track_states:
-        #     with open('thread_level_states.csv', 'a') as f:
-        #         f.write(f"Read, {throughput_increase}, {self.sender_buffer_in_use}, {self.receiver_buffer_in_use}\n")
-        return next_time
-
-    def network_thread_task(self, time):
-        throughput_increase = 0
-        # print(f"Network Thread start: Network Throughput: {throughput_increase}, Sender Buffer: {self.sender_buffer_in_use}, Receiver Buffer: {self.receiver_buffer_in_use}")
-        if self.sender_buffer_in_use > 0 and self.receiver_buffer_in_use < self.receiver_buffer_capacity:
-            network_throughput_temp = min(self.network_throughput_per_thread, self.sender_buffer_in_use, self.receiver_buffer_capacity - self.receiver_buffer_in_use)
-            throughput_increase = min(network_throughput_temp, self.network_bandwidth-self.network_throughput)
-            self.network_throughput += throughput_increase
-            self.sender_buffer_in_use -= throughput_increase
-            self.receiver_buffer_in_use += throughput_increase
-
-        time_taken = throughput_increase / self.network_throughput_per_thread
-        next_time = time + time_taken + 0.01
-        if next_time < 1:
-            self.thread_queue.put((next_time, "network"))
-        # print(f"Network Thread end: Network Throughput: {throughput_increase}, Sender Buffer: {self.sender_buffer_in_use}, Receiver Buffer: {self.receiver_buffer_in_use}")
-        # if throughput_increase > 0 and self.track_states:
-        #     with open('thread_level_states.csv', 'a') as f:
-        #         f.write(f"Network, {throughput_increase}, {self.sender_buffer_in_use}, {self.receiver_buffer_in_use}\n")
-        return next_time
-
-    def write_thread_task(self, time):
-        throughput_increase = 0
-        if self.receiver_buffer_in_use > 0:
-            write_throughput_temp = min(self.write_throughput_per_thread, self.receiver_buffer_in_use)
-            throughput_increase = min(write_throughput_temp, self.write_bandwidth-self.write_throughput)
-            self.write_throughput += throughput_increase
-            self.receiver_buffer_in_use -= throughput_increase
-
-        time_taken = throughput_increase / self.write_throughput_per_thread
-        next_time = time + time_taken + 0.01
-        if next_time < 1:
-            self.thread_queue.put((next_time, "write"))
-        # print(f"Write Thread: Sender Buffer: {self.sender_buffer_in_use}, Receiver Buffer: {self.receiver_buffer_in_use}")
-        # if throughput_increase > 0 and self.track_states:
-        #     with open('thread_level_states.csv', 'a') as f:
-        #         f.write(f"Write, {throughput_increase}, {self.sender_buffer_in_use}, {self.receiver_buffer_in_use}\n")
-        return next_time
-
-    def get_utility_value_dummy(self, threads):
-        x1, x2, x3 = map(int, threads)
-        return ((x1 - 1) ** 2 + (x2 - 2) ** 2 + (x3 + 3) ** 2 + \
-            np.sin(2 * x1) + np.sin(2 * x2) + np.cos(2 * x3)) * -1
-
-    def get_utility_value(self, threads):
-        read_thread, network_thread, write_thread = map(int, threads)
-        self.read_thread = read_thread
-        self.network_thread = network_thread
-        self.write_thread = write_thread
-
-        self.thread_queue = PriorityQueue() # Key: time, Value: thread_type
-        self.read_throughput = 0
-        self.network_throughput = 0
-        self.write_throughput = 0
-
-        # populate the thread queue
-        for i in range(read_thread):
-            self.thread_queue.put((0, "read"))
-        for i in range(network_thread):
-            self.thread_queue.put((0, "network"))
-        for i in range(write_thread):
-            self.thread_queue.put((0, "write"))
-
-        read_thread_finish_time = 0
-        network_thread_finish_time = 0
-        write_thread_finish_time = 0
-
-        while not self.thread_queue.empty():
-            time, thread_type = self.thread_queue.get()
-            if thread_type == "read":
-                read_thread_finish_time = self.read_thread_task(time)
-            elif thread_type == "network":
-                network_thread_finish_time = self.network_thread_task(time)
-            elif thread_type == "write":
-                write_thread_finish_time = self.write_thread_task(time)
-
-        self.read_throughput = self.read_throughput / read_thread_finish_time
-        self.network_throughput = self.network_throughput / network_thread_finish_time
-        self.write_throughput = self.write_throughput / write_thread_finish_time
-
-        self.sender_buffer_in_use = max(self.sender_buffer_in_use, 0)
-        self.receiver_buffer_in_use = max(self.receiver_buffer_in_use, 0)
-
-        utility = (self.read_throughput/self.K ** read_thread) + (self.network_throughput/self.K ** network_thread) + (self.write_throughput/self.K ** write_thread)
-
-        # print(f"Read thread: {read_thread}, Network thread: {network_thread}, Write thread: {write_thread}, Utility: {utility}")
-
-        if self.track_states:
-            with open('threads_'+ configurations['model_version'] +'.csv', 'a') as f:
-                f.write(f"{read_thread}, {network_thread}, {write_thread}\n")
-            with open('throughputs_'+ configurations['model_version'] +'.csv', 'a') as f:
-                f.write(f"{self.read_throughput}, {self.network_throughput}, {self.write_throughput}\n")
-
-        final_state = SimulatorState(self.sender_buffer_capacity-self.sender_buffer_in_use,
-                                     self.receiver_buffer_capacity-self.receiver_buffer_in_use,
-                                     self.read_throughput, self.write_throughput, self.network_throughput,
-                                     read_thread, write_thread, network_thread)
-
-        return utility, final_state
-
 import math
-class SimulatorGenerator:
-    def generate_simulator(self, episode=1):
-        factor = max(4 - (episode/100000), 1)
-        oneGB = 1024
-        env_cnt = episode/800
-        divison_coefficients = [1.5, 2.0, 2.5, 3.0]
-        division_coefficient = divison_coefficients[min(2, int(env_cnt / 170))]
-
-        sender_buffer_capacity = max(2, int(np.random.normal(loc=5, scale=1/factor))) * oneGB
-        receiver_buffer_capacity = max(2, int(np.random.normal(loc=5, scale=1/factor))) * oneGB
-        
-        read_bandwidth = sender_buffer_capacity
-        write_bandwidth = receiver_buffer_capacity
-        network_bandwidth = max(0.4, int(np.random.normal(loc=1, scale=0.3/factor))) * oneGB
-
-        read_throughput_per_thread = max(30, int(np.random.normal(loc=150, scale=30/factor)))
-        network_throughput_per_thread = max(30, int(np.random.normal(loc=150, scale=30/factor)))
-        write_throughput_per_thread = max(30, int(np.random.normal(loc=150, scale=30/factor)))
-        
-        if env_cnt % 25 < 5:
-            network_throughput_per_thread = read_throughput_per_thread
-            write_throughput_per_thread = read_throughput_per_thread
-        elif env_cnt % 25 < 10:
-            network_throughput_per_thread = read_throughput_per_thread
-            write_throughput_per_thread = read_throughput_per_thread/division_coefficient
-        elif env_cnt % 25 < 15:
-            network_throughput_per_thread = read_throughput_per_thread/division_coefficient
-            write_throughput_per_thread = read_throughput_per_thread
-        elif env_cnt % 25 < 20:
-            network_throughput_per_thread = write_throughput_per_thread
-            read_throughput_per_thread = write_throughput_per_thread/division_coefficient
-        else:
-            read_throughput_per_thread = network_throughput_per_thread/max(2.5, division_coefficient)
-            write_throughput_per_thread = network_throughput_per_thread*max(2.5, division_coefficient)
-
-        
-        
-
-        simulator = NetworkSystemSimulator(sender_buffer_capacity=sender_buffer_capacity,
-                                            receiver_buffer_capacity=receiver_buffer_capacity,
-                                            read_throughput_per_thread=read_throughput_per_thread,
-                                            network_throughput_per_thread=network_throughput_per_thread,
-                                            write_throughput_per_thread=write_throughput_per_thread,
-                                            read_bandwidth=read_bandwidth,
-                                            write_bandwidth=write_bandwidth,
-                                            network_bandwidth=network_bandwidth,
-                                            track_states=True)
-
-        min_bandwidth = min(read_bandwidth, write_bandwidth, network_bandwidth)
-
-        optimal_read_thread = max(2, math.ceil(min_bandwidth // read_throughput_per_thread))
-        optimal_network_thread = max(2, math.ceil(min_bandwidth // network_throughput_per_thread))
-        optimal_write_thread = max(2, math.ceil(min_bandwidth // write_throughput_per_thread))
-
-        optimals = [optimal_read_thread, optimal_network_thread, optimal_write_thread, min_bandwidth]
-
-        print(optimals)
-        
-        return optimals, simulator
 
 class NetworkOptimizationEnv(gym.Env):
     def __init__(self, simulator=None):
         super(NetworkOptimizationEnv, self).__init__()
         oneGB = 1024
-        self.simulator = NetworkSystemSimulator(sender_buffer_capacity=5*oneGB,
-                                                receiver_buffer_capacity=3*oneGB,
-                                                read_throughput_per_thread=100,
-                                                network_throughput_per_thread=75,
-                                                write_throughput_per_thread=35,
-                                                read_bandwidth=6*oneGB,
-                                                write_bandwidth=700,
+        self.simulator = NetworkSystemSimulator(network_throughput_per_thread=75,
                                                 network_bandwidth=1*oneGB,
                                                 track_states=True)
         if simulator is not None:
@@ -295,30 +40,20 @@ class NetworkOptimizationEnv(gym.Env):
         self.thread_limits = [1, 30]  # Threads can be between 1 and 10
 
         # Continuous action space: adjustments between -5.0 and +5.0
-        self.action_space = spaces.Box(low=np.array([self.thread_limits[0]] * 3),
-                               high=np.array([self.thread_limits[1]] * 3),
+        self.action_space = spaces.Box(low=np.array([self.thread_limits[0]]),
+                               high=np.array([self.thread_limits[1]]),
                                dtype=np.float32)
 
         self.observation_space = spaces.Box(
-            low=np.array([0, 0, 0, 0, 0, self.thread_limits[0], self.thread_limits[0], self.thread_limits[0]]),
+            low=np.array([0, self.thread_limits[0]]),
             high=np.array([
-                self.simulator.sender_buffer_capacity,
-                self.simulator.receiver_buffer_capacity,
-                np.inf,  # Or maximum possible throughput values
                 np.inf,
-                np.inf,
-                self.thread_limits[1],
-                self.thread_limits[1],
                 self.thread_limits[1]
             ]),
             dtype=np.float32
         )
 
-        self.state = SimulatorState(sender_buffer_remaining_capacity=5*oneGB,
-                                    receiver_buffer_remaining_capacity=3*oneGB,
-                                    read_thread=1,
-                                    network_thread=1,
-                                    write_thread=1)
+        self.state = SimulatorState(network_thread=1, network_throughput=0)
         self.max_steps = 10
         self.current_step = 0
 
@@ -335,10 +70,6 @@ class NetworkOptimizationEnv(gym.Env):
         penalty = 0
         if new_thread_counts[0] == self.thread_limits[0] or new_thread_counts[0] == self.thread_limits[1]:
             penalty -= 100  # Adjust penalty value as needed
-        if new_thread_counts[1] == self.thread_limits[0] or new_thread_counts[1] == self.thread_limits[1]:
-            penalty -= 100
-        if new_thread_counts[2] == self.thread_limits[0] or new_thread_counts[2] == self.thread_limits[1]:
-            penalty -= 100
 
         # Adjust reward
         reward = utility + penalty
@@ -356,18 +87,10 @@ class NetworkOptimizationEnv(gym.Env):
         if simulator is not None:
             self.simulator = simulator
             
-        self.simulator.read_thread = np.random.randint(3, self.thread_limits[1]-1)
         self.simulator.network_thread = np.random.randint(3, self.thread_limits[1]-1)
-        self.simulator.write_thread = np.random.randint(3, self.thread_limits[1]-1)
-        sender_buffer_remaining_capacity = self.simulator.sender_buffer_capacity - self.simulator.sender_buffer_in_use
-        receiver_buffer_remaining_capacity = self.simulator.receiver_buffer_capacity - self.simulator.receiver_buffer_in_use
 
         self.state = SimulatorState(
-            sender_buffer_remaining_capacity=sender_buffer_remaining_capacity,
-            receiver_buffer_remaining_capacity=receiver_buffer_remaining_capacity,
-            read_thread=self.simulator.read_thread,
             network_thread=self.simulator.network_thread,
-            write_thread=self.simulator.write_thread,
         )
         
         self.current_step = 0
@@ -411,7 +134,7 @@ class PolicyNetworkContinuous(nn.Module):
                 nn.ReLU(),
                 nn.Linear(256, 256),
                 nn.LayerNorm(256)
-            ) for _ in range(3)
+            ) for _ in range(action_dim)
         ])
         
         self.mean_layer = nn.Linear(256, action_dim)
@@ -608,12 +331,6 @@ def plot_rewards(rewards, title, pdf_file):
 
 import os
 if __name__ == '__main__':
-    if os.path.exists('threads'+ configurations['model_version'] +'.csv'):
-        os.remove('threads'+ configurations['model_version'] +'.csv')
-    if os.path.exists('throughputs'+ configurations['model_version'] +'.csv'):
-        os.remove('throughputs'+ configurations['model_version'] +'.csv')
-
-    # crerate models and best_models directory if not exists
     if not os.path.exists('models'):
         os.makedirs('models')
     if not os.path.exists('best_models'):
@@ -622,42 +339,46 @@ if __name__ == '__main__':
     oneGB = 1024
 
     # ── NEW: derive parameters straight from the logs ──
-    from log_stats import extract_log_metrics          # if you saved the helper elsewhere
-    metrics = extract_log_metrics(configurations['model_version'])
-    print(f"Metrics extracted: {metrics}")
+    # from log_stats import extract_log_metrics          # if you saved the helper elsewhere
+    # metrics = extract_log_metrics(configurations['model_version'])
+    # print(f"Metrics extracted: {metrics}")
 
-    sender_buffer_capacity      = metrics['sender_buffer_capacity']
-    receiver_buffer_capacity    = metrics['receiver_buffer_capacity']
+    # sender_buffer_capacity      = metrics['sender_buffer_capacity']
+    # receiver_buffer_capacity    = metrics['receiver_buffer_capacity']
 
-    read_throughput_per_thread      = metrics['read_throughput_per_thread']
-    network_throughput_per_thread   = metrics['network_throughput_per_thread']
-    write_throughput_per_thread     = metrics['write_throughput_per_thread']
+    # read_throughput_per_thread      = metrics['read_throughput_per_thread']
+    # network_throughput_per_thread   = metrics['network_throughput_per_thread']
+    # write_throughput_per_thread     = metrics['write_throughput_per_thread']
 
-    read_bandwidth      = metrics['read_bandwidth']
-    network_bandwidth   = metrics['network_bandwidth']
-    write_bandwidth     = metrics['write_bandwidth']
+    # read_bandwidth      = metrics['read_bandwidth']
+    # network_bandwidth   = metrics['network_bandwidth']
+    # write_bandwidth     = metrics['write_bandwidth']
 
 
-    bottleneck = min(read_bandwidth, network_bandwidth, write_bandwidth)
-    optimal_read_thread = bottleneck/read_throughput_per_thread
-    optimal_network_thread = bottleneck/network_throughput_per_thread
-    optimal_write_thread = bottleneck/write_throughput_per_thread
+    # bottleneck = min(read_bandwidth, network_bandwidth, write_bandwidth)
+    # optimal_read_thread = bottleneck/read_throughput_per_thread
+    # optimal_network_thread = bottleneck/network_throughput_per_thread
+    # optimal_write_thread = bottleneck/write_throughput_per_thread
 
-    optimal_reward = bottleneck * (1/(configurations['K']**optimal_read_thread)
-                                   + 1/(configurations['K']**optimal_network_thread)
-                                   + 1/(configurations['K']**optimal_write_thread))
+    # optimal_reward = bottleneck * (1/(configurations['K']**optimal_read_thread)
+    #                                + 1/(configurations['K']**optimal_network_thread)
+    #                                + 1/(configurations['K']**optimal_write_thread))
 
-    simulator = NetworkSystemSimulator(sender_buffer_capacity=sender_buffer_capacity,
-                                            receiver_buffer_capacity=receiver_buffer_capacity,
-                                            read_throughput_per_thread=read_throughput_per_thread,
-                                            network_throughput_per_thread=network_throughput_per_thread,
-                                            write_throughput_per_thread=write_throughput_per_thread,
-                                            read_bandwidth=read_bandwidth,
-                                            network_bandwidth=network_bandwidth,
-                                            write_bandwidth=write_bandwidth,
+    # simulator = NetworkSystemSimulator(sender_buffer_capacity=sender_buffer_capacity,
+    #                                         receiver_buffer_capacity=receiver_buffer_capacity,
+    #                                         read_throughput_per_thread=read_throughput_per_thread,
+    #                                         network_throughput_per_thread=network_throughput_per_thread,
+    #                                         write_throughput_per_thread=write_throughput_per_thread,
+    #                                         read_bandwidth=read_bandwidth,
+    #                                         network_bandwidth=network_bandwidth,
+    #                                         write_bandwidth=write_bandwidth,
+    #                                         track_states=True)
+    simulator = NetworkSystemSimulator(network_throughput_per_thread=75,
+                                            network_bandwidth=1*oneGB,
                                             track_states=True)
+    optimal_reward = 1*oneGB * (1/(configurations['K']**(1*oneGB/75)))
     env = NetworkOptimizationEnv(simulator=simulator)
-    agent = PPOAgentContinuous(state_dim=8, action_dim=3, lr=1e-4, eps_clip=0.1)
+    agent = PPOAgentContinuous(state_dim=2, action_dim=1, lr=1e-4, eps_clip=0.1)
     rewards = train_ppo(env, agent, max_episodes=30000, optimal_reward=optimal_reward)
     
     plot_rewards(rewards, 'PPO Training Rewards', 'training_rewards_'+ configurations['model_version'] +'.pdf')
