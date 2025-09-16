@@ -12,7 +12,7 @@ configurations = {
     "B": 10, # severity of the packet loss punishment
     "K": 1.02, # cost of increasing concurrency
     "loglevel": "info",
-    "probing_sec": 3, # probing interval in seconds
+    "probing_sec": 10, # probing interval in seconds
     "network_limit": -1, # Network limit (Mbps) per thread
     "io_limit": -1, # I/O limit (Mbps) per thread
     "memory_use": {
@@ -29,7 +29,7 @@ configurations = {
         'write': 20
     },
     "mp_opt": True, # use true for ppo, false for gradient
-    "method": "ppo", # options: [gradient, ppo]
+    "method": "gradient", # options: [gradient, ppo]
     "model_version": 'random', # just a tag for the model
     "mode": 'inference', # random or inference
 }
@@ -42,4 +42,4 @@ configurations.setdefault("inference_policy_model",
 configurations.setdefault("max_episodes",
                             20 if configurations["mode"] == "random" else 20000)
 configurations.setdefault("multiplier",
-                            20 if configurations["mode"] == "random" else 1)            
+                            20 if configurations["mode"] == "random" else 1)

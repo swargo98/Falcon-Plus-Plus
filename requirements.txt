@@ -1,0 +1,16 @@
+joblib
+numpy
+pyaml
+PyYAML
+scikit-learn
+scikit-optimize
+scipy
+threadpoolctl
+torch
+matplotlib
+pandas
+gym
+zmq
+tinyrpc
+numpy
+tqdm

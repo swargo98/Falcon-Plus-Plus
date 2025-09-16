@@ -19,6 +19,6 @@ configurations = {
         "maximum": 1000,
         "threshold": 1,
     },
-    "method": "ppo", # options: [gradient, ppo]
+    "method": "gradient", # options: [gradient, ppo]
     "model_version": 'residual',
 }

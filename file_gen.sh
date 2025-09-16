@@ -1,26 +1,26 @@
 #!/bin/bash
+set -euo pipefail
 
-# Variables
-output_dir="/mnt/nvme0n1/src"       # Output directory to store the files
-file_count=200          # Number of files to create
-file_size=100           # Size of each file in MB
-parallel_jobs=10        # Set parallel jobs to the number of CPU cores
+output_dir="/mnt/nvme0n1/src"
+file_count=10
+file_size=1200      # MiB
+parallel_jobs=10
 
-# Create the output directory if it doesn't exist
-mkdir -p "$output_dir" || { echo "Error: Unable to create the output directory."; exit 1; }
+mkdir -p "$output_dir"
 
-# Function to create a single file
 create_file() {
-    local file_index=$1
-    echo "Generating file: random_file_$file_index (100MB)..."
-    dd if=/dev/zero of="$output_dir/random_file_$file_index" bs=1M count=$file_size status=none
-    echo "File random_file_$file_index created."
+  local file_index=$1
+  local path="$output_dir/random_file_$file_index"
+  echo "Generating $path (${file_size} MiB)..."
+  # AES-CTR pseudorandom stream, exact size via fullblock
+  openssl enc -aes-256-ctr -nosalt -pass pass:"seed-$file_index" </dev/zero 2>/dev/null \
+    | dd of="$path" bs=1M count="$file_size" iflag=fullblock status=none conv=fdatasync
+  # sanity: show exact size in bytes
+  stat -c '%n %s bytes' "$path"
 }
 
 export -f create_file
 export output_dir file_size
 
-# Generate files in parallel
-seq 1 $file_count | xargs -n 1 -P $parallel_jobs -I {} bash -c 'create_file "$@"' _ {}
-
-echo "Created $file_count random files of ${file_size}MB each in the directory: $output_dir"
+seq 1 "$file_count" | xargs -n1 -P "$parallel_jobs" -I{} bash -c 'create_file "$@"' _ {}
+echo "Created $file_count files of ${file_size} MiB in $output_dir"
