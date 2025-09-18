@@ -7,7 +7,7 @@ import socket
 import warnings
 import datetime
 import numpy as np
-import psutil
+# import psutil
 import pprint
 import argparse
 import logging as log
@@ -16,11 +16,7 @@ from threading import Thread
 from concurrent.futures import ThreadPoolExecutor
 from config_sender import configurations
 from search import  base_optimizer, brute_force, hill_climb, cg_opt, gradient_opt_fast
-from network_stats.usage_gemini import collect_metrics
-from models import StateSnapshot, snapshot_from_schema1, snapshot_from_schema2, AgentState, Action, SAO, BoundedDelta, Throughput
-from reasoner import PolicyLLM, apply_caps, ollama_json_generator
 from utils import tcp_stats, get_dir_size
-from memory import SAOMemory
 import math
 from ppo import PPOAgentContinuous, train_ppo, load_model, NetworkOptimizationEnv
 from fpp_simulator import SimulatorState
@@ -398,42 +394,59 @@ class PPOOptimizer:
                                network_thread=network_thread
                                )
         return state
+    
+    def ppo_probing(params):
+        global throughput_logs, exit_signal
 
-    def ppo_probing(self, params):
-        global network_throughput_logs, exit_signal, rQueue, tQueue, file_processed, file_count
+        if file_incomplete.value == 0:
+            return exit_signal
 
-        if file_processed.value == file_count:
-            log.info("Exiting Write 464")
-            return [exit_signal]
-        
-        network_thread = params[0]
+        params = [1 if x<1 else int(np.round(x)) for x in params]
+        log.info("Probing Parameters: {0}".format(params))
+        num_workers.value = params[0]
 
-        log.info("Probing Parameters - [Network]: {0}, {1}, {2}".format(network_thread))
-        
-        for i in range(len(transfer_process_status)):
-            transfer_process_status[i] = 1 if (i < network_thread and file_processed.value<file_count) else 0
+        current_cc = np.sum(process_status)
+        for i in range(configurations["thread_limit"]):
+            if i < params[0]:
+                if (i >= current_cc):
+                    process_status[i] = 1
+            else:
+                process_status[i] = 0
+
+        log.info("Active CC: {0}".format(np.sum(process_status)))
 
         time.sleep(1)
-
-        # Before
-        prev_sc, prev_rc = tcp_stats(RCVR_ADDR, log)
-        n_time = time.time() + probing_time - 1.05
-        while (time.time() < n_time) and (file_processed.value < file_count):
+        prev_sc, prev_rc = tcp_stats()
+        n_time = time.time() + probing_time - 1.1
+        # time.sleep(n_time)
+        while (time.time() < n_time) and (file_incomplete.value > 0):
             time.sleep(0.1)
 
-        # After
-        curr_sc, curr_rc = tcp_stats(RCVR_ADDR, log)
+        curr_sc, curr_rc = tcp_stats()
         sc, rc = curr_sc - prev_sc, curr_rc - prev_rc
+
         log.debug("TCP Segments >> Send Count: {0}, Retrans Count: {1}".format(sc, rc))
+        thrpt = np.mean(throughput_logs[-2:]) if len(throughput_logs) > 2 else 0
 
-        ## Network Score
-        net_thrpt = np.round(np.mean(network_throughput_logs[-2:])) if len(network_throughput_logs) > 2 else 0
         lr, B, K = 0, int(configurations["B"]), float(configurations["K"])
+        if sc != 0:
+            lr = rc/sc if sc>rc else 0
 
-        if file_processed.value == file_count:
-            return [exit_signal]
+        # score = thrpt
+        plr_impact = B*lr
+        # cc_impact_lin = (K-1) * num_workers.value
+        # score = thrpt * (1- plr_impact - cc_impact_lin)
+        cc_impact_nl = K**num_workers.value
+        score = (thrpt/cc_impact_nl) - (thrpt * plr_impact)
+        score_value = np.round(score * (-1))
 
-        return [net_thrpt] #score_value
+        log.info("Sample Transfer -- Throughput: {0}Mbps, Loss Rate: {1}%, Score: {2}".format(
+            np.round(thrpt), np.round(lr*100, 2), score_value))
+
+        if file_incomplete.value == 0:
+            return exit_signal
+        else:
+            return score_value
 
     def get_reward(self, params):
         net_thrpt = self.ppo_probing(params)
