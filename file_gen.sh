@@ -31,7 +31,7 @@ set -euo pipefail
 # Config – tweak these if you need a different mix
 ################################################################################
 output_dir="/mnt/nvme0n1/files_mixed"
-target_total_gb=512
+target_total_gb=40
 
 # Byte-share across categories (adjust if needed)
 pct_small=5                  # 100 KB–1 MB
@@ -65,26 +65,27 @@ rand_int() {  # MIN MAX -> prints integer in [MIN,MAX]
   local min=$1 max=$2 range=$((max - min + 1))
   # stitch multiple $RANDOM calls to widen the entropy
   local r=$(( ( (RANDOM << 15 | RANDOM) << 15 | RANDOM ) & 0x7fffffffffffffff ))
-  echo $(( min + (r % range) ))
+  echo "$(( min + (r % range) ))"
 }
 
-# Write exactly SIZE bytes of random content to PATH (fast, reproducible-ish stream)
+# Write exactly SIZE bytes of random content to PATH (no pipes → no SIGPIPE)
 write_random_bytes() { # SIZE PATH
   local sz=$1 path=$2
-  local seed="seed-$(printf '%s' "$path-$RANDOM-$$-$(date +%s%N)" | sha256sum | cut -c1-16)"
   if command -v openssl >/dev/null 2>&1; then
-    # AES-CTR on /dev/zero → pseudorandom stream; head trims to exact size
-    openssl enc -aes-256-ctr -nosalt -pass pass:"$seed" </dev/zero 2>/dev/null \
-      | head -c "$sz" > "$path"
+    # OpenSSL RAND writes exactly sz bytes directly to file
+    openssl rand -out "$path" "$sz" 2>/dev/null
   elif [ -r /dev/urandom ]; then
+    # Fallback: kernel RNG (can be slower)
     head -c "$sz" /dev/urandom > "$path"
   else
-    # last resort: zeros (not random)
+    # Last resort: zeros
     dd if=/dev/zero of="$path" bs=1M count=$((sz/1048576)) status=none
     local rem=$((sz % 1048576))
-    if (( rem > 0 )); then dd if=/dev/zero of="$path" bs=1 count="$rem" oflag=append conv=notrunc status=none; fi
+    if (( rem > 0 )); then dd if=/dev/zero of="$path" bs=1 count="$rem" \
+        oflag=append conv=notrunc status=none; fi
   fi
 }
+
 
 # Write SIZE bytes of zeros quickly
 write_zero_bytes() { # SIZE PATH
