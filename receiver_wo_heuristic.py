@@ -129,6 +129,8 @@ if __name__ == '__main__':
 
     direct_io = False
     root = configurations["data_dir"]
+    if not os.path.exists(root):
+        os.makedirs(root)
     HOST, PORT = configurations["receiver"]["host"], configurations["receiver"]["port"]
 
     file_transfer = True
