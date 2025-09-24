@@ -54,7 +54,7 @@ def worker(sock, process_num):
                         fd = os.open(root+filename, os.O_CREAT | os.O_RDWR | os.O_DIRECT | os.O_SYNC)
                         m = mmap.mmap(-1, to_rcv)
                     else:
-                        fd = os.open(root+filename, os.O_CREAT | os.O_RDWR)
+                        fd = os.open(root+filename, os.O_CREAT | os.O_RDWR, 0o644)
 
                     os.lseek(fd, offset, os.SEEK_SET)
                     log.debug("Receiving file: {0}".format(filename))
@@ -90,7 +90,7 @@ def worker(sock, process_num):
             client.close()
             process_status[process_num] = 0
         except Exception as e:
-            log.error(str(e))
+            log.error(f"{str(process_num)}, {str(e)}")
             # raise e
 
 
