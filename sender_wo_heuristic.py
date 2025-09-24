@@ -68,29 +68,6 @@ if "file_transfer" in configurations and configurations["file_transfer"] is not 
     file_transfer = configurations["file_transfer"]
 
 
-def enqueue_chunks(chunk_bytes, file_ids):
-    """
-    Enqueue virtual chunks as work items: (file_id, start_offset, size).
-    Also populates pending_chunks[file_id] so we can detect per-file completion.
-    """
-    for fid in file_ids:
-        total = int(file_sizes[fid])
-        nchunks = int(math.ceil(total / float(chunk_bytes)))
-        pending_chunks[fid] = nchunks
-        start = 0
-        while start < total:
-            sz = min(chunk_bytes, total - start)
-            q.put((fid, start, sz))
-            start += sz
-
-def _mark_chunk_done(fid):
-    with pending_lock:
-        remain = int(pending_chunks.get(fid, 0)) - 1
-        pending_chunks[fid] = remain
-        if remain <= 0:
-            # whole file finished
-            file_incomplete.value -= 1
-
 def tcp_stats():
     global RCVR_ADDR
     start = time.time()
@@ -203,7 +180,7 @@ def worker(process_id, q):
             log.debug("End Process :: {0}".format(process_id))
 
     process_status[process_id] = 0
-    
+
 def sample_transfer(params):
     global throughput_logs, exit_signal
 
@@ -530,16 +507,9 @@ if __name__ == '__main__':
     HOST, PORT = configurations["receiver"]["host"], configurations["receiver"]["port"]
     RCVR_ADDR = str(HOST) + ":" + str(PORT)
 
-    q = manager.Queue()
-
-    pending_chunks = manager.dict()         # file_id -> int
-    pending_lock   = manager.Lock()
-    bytes_sent_map = manager.dict()
-    all_file_ids = range(file_count.value)
-    enqueue_chunks(500 * 1024 * 1024, all_file_ids)
-
-    print("Total files to send: {0}, Total size: {1} GB".format(
-        file_count.value, np.round(np.sum(file_sizes)/(1024*1024*1024), 3)))
+    q = manager.Queue(maxsize=file_count)
+    for i in range(file_count):
+        q.put(i)
 
     workers = [mp.Process(target=worker, args=(i, q)) for i in range(configurations["thread_limit"])]
     for p in workers:
