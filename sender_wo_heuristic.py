@@ -507,8 +507,8 @@ if __name__ == '__main__':
     HOST, PORT = configurations["receiver"]["host"], configurations["receiver"]["port"]
     RCVR_ADDR = str(HOST) + ":" + str(PORT)
 
-    q = manager.Queue(maxsize=file_count)
-    for i in range(file_count):
+    q = manager.Queue(maxsize=file_count.value)
+    for i in range(file_count.value):
         q.put(i)
 
     workers = [mp.Process(target=worker, args=(i, q)) for i in range(configurations["thread_limit"])]
