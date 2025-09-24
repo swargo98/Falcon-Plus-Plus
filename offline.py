@@ -339,46 +339,31 @@ if __name__ == '__main__':
     oneGB = 1024
 
     # ── NEW: derive parameters straight from the logs ──
-    # from log_stats import extract_log_metrics          # if you saved the helper elsewhere
-    # metrics = extract_log_metrics(configurations['model_version'])
-    # print(f"Metrics extracted: {metrics}")
-
-    # sender_buffer_capacity      = metrics['sender_buffer_capacity']
-    # receiver_buffer_capacity    = metrics['receiver_buffer_capacity']
-
-    # read_throughput_per_thread      = metrics['read_throughput_per_thread']
-    # network_throughput_per_thread   = metrics['network_throughput_per_thread']
-    # write_throughput_per_thread     = metrics['write_throughput_per_thread']
-
-    # read_bandwidth      = metrics['read_bandwidth']
-    # network_bandwidth   = metrics['network_bandwidth']
-    # write_bandwidth     = metrics['write_bandwidth']
+    from log_stats import extract_log_metrics          # if you saved the helper elsewhere
+    metrics = extract_log_metrics(configurations['model_version'])
+    print(f"Metrics extracted: {metrics}")
+    network_throughput_per_thread   = metrics['network_throughput_per_thread']
+    network_bandwidth   = metrics['network_bandwidth']
 
 
-    # bottleneck = min(read_bandwidth, network_bandwidth, write_bandwidth)
-    # optimal_read_thread = bottleneck/read_throughput_per_thread
-    # optimal_network_thread = bottleneck/network_throughput_per_thread
-    # optimal_write_thread = bottleneck/write_throughput_per_thread
+    optimal_network_thread = network_bandwidth/network_throughput_per_thread
 
-    # optimal_reward = bottleneck * (1/(configurations['K']**optimal_read_thread)
-    #                                + 1/(configurations['K']**optimal_network_thread)
-    #                                + 1/(configurations['K']**optimal_write_thread))
+    optimal_reward = network_bandwidth * (1/(configurations['K']**optimal_network_thread))
 
-    # simulator = NetworkSystemSimulator(sender_buffer_capacity=sender_buffer_capacity,
-    #                                         receiver_buffer_capacity=receiver_buffer_capacity,
-    #                                         read_throughput_per_thread=read_throughput_per_thread,
-    #                                         network_throughput_per_thread=network_throughput_per_thread,
-    #                                         write_throughput_per_thread=write_throughput_per_thread,
-    #                                         read_bandwidth=read_bandwidth,
-    #                                         network_bandwidth=network_bandwidth,
-    #                                         write_bandwidth=write_bandwidth,
-    #                                         track_states=True)
-    simulator = NetworkSystemSimulator(network_throughput_per_thread=75,
-                                            network_bandwidth=1*oneGB,
+    simulator = NetworkSystemSimulator(network_throughput_per_thread=network_throughput_per_thread,
+                                            network_bandwidth=network_bandwidth,
                                             track_states=True)
-    optimal_reward = 1*oneGB * (1/(configurations['K']**(1*oneGB/75)))
     env = NetworkOptimizationEnv(simulator=simulator)
     agent = PPOAgentContinuous(state_dim=2, action_dim=1, lr=1e-4, eps_clip=0.1)
     rewards = train_ppo(env, agent, max_episodes=30000, optimal_reward=optimal_reward)
     
     plot_rewards(rewards, 'PPO Training Rewards', 'training_rewards_'+ configurations['model_version'] +'.pdf')
+    # simulator = NetworkSystemSimulator(network_throughput_per_thread=75,
+    #                                         network_bandwidth=1*oneGB,
+    #                                         track_states=True)
+    # optimal_reward = 1*oneGB * (1/(configurations['K']**(1*oneGB/75)))
+    # env = NetworkOptimizationEnv(simulator=simulator)
+    # agent = PPOAgentContinuous(state_dim=2, action_dim=1, lr=1e-4, eps_clip=0.1)
+    # rewards = train_ppo(env, agent, max_episodes=30000, optimal_reward=optimal_reward)
+    
+    # plot_rewards(rewards, 'PPO Training Rewards', 'training_rewards_'+ configurations['model_version'] +'.pdf')

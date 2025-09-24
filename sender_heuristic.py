@@ -158,8 +158,8 @@ def worker(process_id, q):
                     filename_abs = os.path.join(root, filename_rel)
                     total_size = int(file_sizes[file_id])
 
-                    print("Sending file: {0}, offset: {1}, size: {2}".format(
-                        filename_rel, start_offset, chunk_len))
+                    # print("Sending file: {0}, offset: {1}, size: {2}".format(
+                    #     filename_rel, start_offset, chunk_len))
                     
                     if chunk_len <= 0:
                     # spurious empty item; treat as done to avoid leaks
@@ -227,8 +227,8 @@ def worker(process_id, q):
                             filename_rel, offset, remaining))
                         q.put((file_id, offset, remaining))
                     else:
-                        print("Finished sending file: {0}, offset: {1}, size: {2}".format(
-                            filename_rel, start_offset, chunk_len))
+                        # print("Finished sending file: {0}, offset: {1}, size: {2}".format(
+                        #     filename_rel, start_offset, chunk_len))
                         _mark_chunk_done(file_id)
 
                 sock.close()
@@ -313,7 +313,11 @@ def normal_transfer(params):
 def run_transfer():
     params = [2]
 
-    if configurations["method"].lower() == "brute":
+    if configurations["method"].lower() == "ppo":
+        log.info("Running PPO Optimization .... ")
+        optimizer = PPOOptimizer()
+    
+    elif configurations["method"].lower() == "brute":
         log.info("Running Brute Force Optimization .... ")
         params = brute_force(configurations, sample_transfer, log)
 
@@ -341,7 +345,6 @@ def run_transfer():
     if file_incomplete.value > 0:
         normal_transfer(params)
 
-
 class PPOOptimizer:
     def __init__(self):
         self.prev_network_throughput = 0
@@ -365,7 +368,7 @@ class PPOOptimizer:
 
 
         self.env = NetworkOptimizationEnv(black_box_function=self.get_reward, state=state, history_length=self.history_length)
-        self.agent = PPOAgentContinuous(state_dim=8, action_dim=3, lr=1e-4, eps_clip=0.1)
+        self.agent = PPOAgentContinuous(state_dim=2, action_dim=1, lr=1e-4, eps_clip=0.1)
 
         policy_model = ""
         value_model = ""
@@ -385,6 +388,8 @@ class PPOOptimizer:
 
         rewards = train_ppo(self.env, self.agent, max_episodes=configurations['max_episodes'], is_inference = is_inference, is_random = is_random)
 
+        print("Training finished.")
+
     def get_state(self, is_start=False):
         network_thrpt = self.current_network_throughput
         network_thread = self.current_network_thread
@@ -395,18 +400,19 @@ class PPOOptimizer:
                                )
         return state
     
-    def ppo_probing(params):
+    def ppo_probing(self, params):
         global throughput_logs, exit_signal
 
         if file_incomplete.value == 0:
-            return exit_signal
+            print("408 File transfer completed.")
+            return [exit_signal, exit_signal]
 
         params = [1 if x<1 else int(np.round(x)) for x in params]
-        log.info("Probing Parameters: {0}".format(params))
+        log.info("412 Probing Parameters: {0}".format(params))
         num_workers.value = params[0]
 
         current_cc = np.sum(process_status)
-        for i in range(configurations["thread_limit"]):
+        for i in range(configurations["max_cc"]['network']):
             if i < params[0]:
                 if (i >= current_cc):
                     process_status[i] = 1
@@ -444,12 +450,13 @@ class PPOOptimizer:
             np.round(thrpt), np.round(lr*100, 2), score_value))
 
         if file_incomplete.value == 0:
-            return exit_signal
+            print("454 File transfer completed.")
+            return [exit_signal, exit_signal]
         else:
-            return score_value
+            return [thrpt, score_value]
 
     def get_reward(self, params):
-        net_thrpt = self.ppo_probing(params)
+        net_thrpt, reward = self.ppo_probing(params)
         network_thread = params[0]
 
         log.info(f"Throughputs -- Network: {net_thrpt}")
@@ -464,22 +471,23 @@ class PPOOptimizer:
         self.current_network_throughput = net_thrpt
 
 
-        utility_network = (net_thrpt/self.K ** network_thread)
+        # utility_network = (net_thrpt/self.K ** network_thread)
 
-        reward = utility_network
+        # reward = utility_network
         self.current_reward = reward
 
 
-        network_grad = (utility_network-self.utility_network)/(network_thread-self.prev_network_thread) if (network_thread-self.prev_network_thread) > 0 else 0
-        grads = [network_grad]
-        grads = np.array(grads, dtype=np.float32)
+        # network_grad = (utility_network-self.utility_network)/(network_thread-self.prev_network_thread) if (network_thread-self.prev_network_thread) > 0 else 0
+        # grads = [network_grad]
+        # grads = np.array(grads, dtype=np.float32)
 
-        self.utility_network = utility_network
+        # self.utility_network = utility_network
 
         final_state = self.get_state()
 
         return reward, final_state
         
+
 
 def report_throughput(start_time):
     global throughput_logs
@@ -514,6 +522,9 @@ def report_throughput(start_time):
                 time_since_begining, curr_thrpt, thrpt, m_avg))
 
             t2 = time.time()
+            fname = 'timed_log_network_ppo_' + configurations['model_version'] +'.csv'
+            with open(fname, 'a') as f:
+                f.write(f"{t2}, {time_since_begining}, {curr_thrpt}, {sum(process_status)}\n")
             time.sleep(max(0, 1 - (t2-t1)))
 
 
@@ -553,7 +564,7 @@ if __name__ == '__main__':
     chunk_size = 1 * 1024 * 1024
     num_workers = mp.Value("i", 0)
     file_incomplete = mp.Value("i", file_count.value)
-    process_status = mp.Array("i", [0 for i in range(configurations["thread_limit"])])
+    process_status = mp.Array("i", [0 for i in range(configurations["max_cc"]['network'])])
     file_offsets = mp.Array("d", [0.0 for i in range(file_count.value)])
     cpus = manager.list()
 

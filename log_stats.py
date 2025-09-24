@@ -19,18 +19,18 @@ def extract_log_metrics(model_version: str,
     oneGB = 1024
     tag = f"ppo_{model_version}"
     p = pathlib.Path(base_dir)
+    cat = "network"
 
     # ------------ timed_log_* ---------------
     dfs = {}
-    for cat in ("read", "network", "write"):
-        f = p / f"timed_log_{cat}_{tag}.csv"
-        if f.exists():
-            dfs[cat] = pd.read_csv(
-                f, header=None,
-                names=["current_time", "time_since_beginning",
-                       "throughputs", "threads"])
-        else:
-            raise FileNotFoundError(f"missing {f}")
+    f = p / f"timed_log_{cat}_{tag}.csv"
+    if f.exists():
+        dfs[cat] = pd.read_csv(
+            f, header=None,
+            names=["current_time", "time_since_beginning",
+                    "throughputs", "threads"])
+    else:
+        raise FileNotFoundError(f"missing {f}")
 
     tppt, tp = {}, {}
     for cat, df in dfs.items():
@@ -44,28 +44,7 @@ def extract_log_metrics(model_version: str,
         k = min(len(nz_tp), top_tp)
         tp[cat] = nz_tp.nlargest(k).median()
 
-    # ------------ shared_memory logs ---------------
-    mem = {}
-    for role in ("sender", "receiver"):
-        f = p / f"shared_memory_log_{role}_{tag}.csv"
-        if f.exists():
-            s = pd.read_csv(f, header=None, names=["used_memory"])["used_memory"]
-            nz = s[s > 0]
-            k = min(len(nz), top_mem)
-            mem[role] = nz.nlargest(k).median()        # use median of top values
-        else:
-            raise FileNotFoundError(f"missing {f}")
-
     return {
-        # capacities as *bytes* – multiply by oneGB where you pass them on
-        "sender_buffer_capacity": int(math.ceil(mem["sender"])) * oneGB,
-        "receiver_buffer_capacity": int(math.ceil(mem["receiver"])) * oneGB,
-
-        "read_throughput_per_thread":  int(tppt["read"]),
         "network_throughput_per_thread": int(tppt["network"]),
-        "write_throughput_per_thread":  int(tppt["write"]),
-
-        "read_bandwidth":    int(tp["read"]),
         "network_bandwidth": int(tp["network"]),
-        "write_bandwidth":   int(tp["write"]),
-    }
+        }
