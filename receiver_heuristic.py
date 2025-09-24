@@ -209,7 +209,7 @@ def worker(sock, process_num):
                         remaining -= written
                         total += written
 
-                    log.info(f"Chunk done: {filename_rel}, offset: {offset}, to_rcv_goal: {to_rcv_goal}, total_size: {total_size}, received: {to_rcv_goal - remaining}")
+                    # log.info(f"Chunk done: {filename_rel}, offset: {offset}, to_rcv_goal: {to_rcv_goal}, total_size: {total_size}, received: {to_rcv_goal - remaining}")
 
                     # if close_file_if_complete(filename_rel):
                     #     log.info("File complete: %s (%d bytes)", filename_rel, st["total"])
