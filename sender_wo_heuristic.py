@@ -106,10 +106,6 @@ def worker(process_id, q):
 
             log.debug("Start Process :: {0}".format(process_id))
             try:
-                sock = socket.socket()
-                sock.settimeout(3)
-                sock.connect((HOST, PORT))
-
                 if emulab_test:
                     target, factor = 2500, 10
                     max_speed = (target * 1000 * 1000)/8
@@ -118,6 +114,9 @@ def worker(process_id, q):
                 while (not q.empty()) and (process_status[process_id] == 1):
                     try:
                         file_id = q.get()
+                        sock = socket.socket()
+                        sock.settimeout(3)
+                        sock.connect((HOST, PORT))
 
                     except:
                         process_status[process_id] = 0
@@ -168,7 +167,7 @@ def worker(process_id, q):
                     else:
                         file_incomplete.value = file_incomplete.value - 1
 
-                sock.close()
+                    sock.close()
 
             except socket.timeout as e:
                 pass

@@ -40,7 +40,7 @@ def worker(sock, process_num):
             process_status[process_num] = 1
             total = 0
             d = client.recv(1).decode()
-            while d:
+            if d:
                 header = ""
                 while d != '\n':
                     header += str(d)
@@ -83,7 +83,7 @@ def worker(sock, process_num):
                     while chunk:
                         chunk = client.recv(chunk_size.value)
 
-                d = client.recv(1).decode()
+                # d = client.recv(1).decode()
 
             total = np.round(total/(1024*1024))
             log.info("{u} exited. total received {d} MB".format(u=address, d=total))
