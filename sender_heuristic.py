@@ -136,13 +136,6 @@ def worker(process_id, q):
                 sock.settimeout(3)
                 sock.connect((HOST, PORT))
 
-                # print("Connected to Receiver: {0}:{1}".format(HOST, PORT))
-
-                if emulab_test:
-                    target, factor = 2500, 10
-                    max_speed = (target * 1000 * 1000)/8
-                    second_target, second_data_count = int(max_speed/factor), 0
-
                 while (not q.empty()) and (process_status[process_id] == 1):
                     try:
                         # print("Queue size: {0}".format(q.qsize()))
@@ -157,6 +150,12 @@ def worker(process_id, q):
                     filename_rel = file_names[file_id]
                     filename_abs = os.path.join(root, filename_rel)
                     total_size = int(file_sizes[file_id])
+
+                    network_limit = configurations['network_limit']
+                    if network_limit>0:
+                        target, factor = network_limit, 8
+                        max_speed = (target * 1024 * 1024)/8
+                        second_target, second_data_count = int(max_speed/factor), 0
 
                     # print("Sending file: {0}, offset: {1}, size: {2}".format(
                     #     filename_rel, start_offset, chunk_len))
@@ -183,27 +182,25 @@ def worker(process_id, q):
                         timer100ms = time.time()
 
                         while (remaining > 0) and (process_status[process_id] == 1):
-                            if emulab_test:
-                                block_size = min(chunk_size, second_target-second_data_count)
-                                data_to_send = bytearray(int(block_size))
-                                sent = sock.send(data_to_send)
+                            if network_limit>0:
+                                block_size = min(chunk_size, second_target-second_data_count, remaining)
                             else:
                                 block_size = min(chunk_size, remaining)
-                                if process_status[process_id] == 0:
-                                    # PAUSE requested: requeue remainder of THIS chunk
+                            # if process_status[process_id] == 0:
+                            #     # PAUSE requested: requeue remainder of THIS chunk
+                            #     paused_mid_chunk = True
+                            #     break
+                            if file_transfer:
+                                try:
+                                    sent = sock.sendfile(file=file, offset=int(offset), count=int(block_size))
+                                    log.debug("Sent data: {0}".format(sent))
+                                except Exception as e:
+                                    log.debug("pid=%s send error: %s", process_id, e)
                                     paused_mid_chunk = True
                                     break
-                                if file_transfer:
-                                    try:
-                                        sent = sock.sendfile(file=file, offset=int(offset), count=int(block_size))
-                                        log.debug("Sent data: {0}".format(sent))
-                                    except Exception as e:
-                                        log.debug("pid=%s send error: %s", process_id, e)
-                                        paused_mid_chunk = True
-                                        break
-                                else:
-                                    data_to_send = bytearray(int(block_size))
-                                    sent = sock.send(data_to_send)
+                            else:
+                                data_to_send = bytearray(int(block_size))
+                                sent = sock.send(data_to_send)
 
                             if sent is None:
                                 sent = 0
@@ -213,7 +210,7 @@ def worker(process_id, q):
                             file_offsets[file_id] += sent
                             bytes_sent_map[file_id] = int(bytes_sent_map.get(file_id, 0)) + sent
 
-                            if emulab_test:
+                            if network_limit>0:
                                 second_data_count += sent
                                 if second_data_count >= second_target:
                                     second_data_count = 0

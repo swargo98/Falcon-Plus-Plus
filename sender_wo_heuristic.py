@@ -106,11 +106,6 @@ def worker(process_id, q):
 
             log.debug("Start Process :: {0}".format(process_id))
             try:
-                if emulab_test:
-                    target, factor = 2500, 10
-                    max_speed = (target * 1000 * 1000)/8
-                    second_target, second_data_count = int(max_speed/factor), 0
-
                 while (not q.empty()) and (process_status[process_id] == 1):
                     try:
                         file_id = q.get()
@@ -125,6 +120,12 @@ def worker(process_id, q):
                     offset = file_offsets[file_id]
                     to_send = file_sizes[file_id] - offset
 
+                    network_limit = configurations['network_limit']
+                    if network_limit>0:
+                        target, factor = network_limit, 8
+                        max_speed = (target * 1024 * 1024)/8
+                        second_target, second_data_count = int(max_speed/factor), 0
+
                     if (to_send > 0) and (process_status[process_id] == 1):
                         filename = root + file_names[file_id]
                         file = open(filename, "rb")
@@ -136,24 +137,22 @@ def worker(process_id, q):
                         timer100ms = time.time()
 
                         while (to_send > 0) and (process_status[process_id] == 1):
-                            if emulab_test:
-                                block_size = min(chunk_size, second_target-second_data_count)
-                                data_to_send = bytearray(int(block_size))
-                                sent = sock.send(data_to_send)
+                            if network_limit>0:
+                                block_size = min(chunk_size, second_target-second_data_count, to_send)
                             else:
                                 block_size = min(chunk_size, to_send)
-                                if file_transfer:
-                                    sent = sock.sendfile(file=file, offset=int(offset), count=int(block_size))
-                                    # data = os.preadv(file, block_size, offset)
-                                else:
-                                    data_to_send = bytearray(int(block_size))
-                                    sent = sock.send(data_to_send)
+                            if file_transfer:
+                                sent = sock.sendfile(file=file, offset=int(offset), count=int(block_size))
+                                # data = os.preadv(file, block_size, offset)
+                            else:
+                                data_to_send = bytearray(int(block_size))
+                                sent = sock.send(data_to_send)
 
                             offset += sent
                             to_send -= sent
                             file_offsets[file_id] = offset
 
-                            if emulab_test:
+                            if network_limit>0:
                                 second_data_count += sent
                                 if second_data_count >= second_target:
                                     second_data_count = 0
