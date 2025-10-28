@@ -61,7 +61,7 @@ class NetworkOptimizationEnv(gym.Env):
         new_thread_counts = np.clip(np.round(action), self.thread_limits[0], self.thread_limits[1]).astype(np.int32)
         
         if is_random:
-            network_thread = np.random.randint(5, self.thread_limits[1]-1)
+            network_thread = np.random.randint(1, self.thread_limits[1]-1)
             new_thread_counts = [network_thread]
         
         # Compute utility and update state

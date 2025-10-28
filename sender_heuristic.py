@@ -23,7 +23,8 @@ from fpp_simulator import SimulatorState
 
 warnings.filterwarnings("ignore", category=FutureWarning)
 configurations["cpu_count"] = mp.cpu_count()
-configurations["thread_limit"] = min(max(1,configurations["max_cc"]['network']), configurations["cpu_count"])
+# configurations["thread_limit"] = min(max(1,configurations["max_cc"]['network']), configurations["cpu_count"])
+configurations["thread_limit"] = configurations["max_cc"]['network']
 
 if not os.path.exists('logs'):
         os.makedirs('logs')
@@ -117,6 +118,50 @@ def tcp_stats():
     end = time.time()
     log.debug("Time taken to collect tcp stats: {0}ms".format(np.round((end-start)*1000)))
     return sent, retm
+
+def tcp_stats_cwnd(elapsed, rcvr_addr=None):
+    """
+    Print cwnd stats (min/max/avg/last) for TCP connections matching rcvr_addr (or global RCVR_ADDR).
+    Returns the list of cwnd values found. Does not modify other behavior.
+    """
+    import os, time
+
+    global RCVR_ADDR
+    addr = rcvr_addr or RCVR_ADDR
+    start = time.time()
+    cwnds = []
+
+    try:
+        data = os.popen("ss -ti").read().splitlines()
+        for i in range(1, len(data)):
+            # If the previous line is a socket line that includes the receiver address
+            if addr in data[i - 1]:
+                # Next line has TCP stats; normalize tokens (strip commas)
+                tokens = [t.strip().rstrip(',') for t in data[i].split() if t.strip()]
+                for entry in tokens:
+                    if entry.startswith("cwnd:"):
+                        # cwnd:10 (integer); be tolerant of parsing issues
+                        try:
+                            cwnds.append(int(entry.split(":", 1)[1]))
+                        except ValueError:
+                            # Sometimes non-integer? Ignore gracefully.
+                            pass
+    except Exception as e:
+        print(e)
+
+    if cwnds:
+        avg_cwnd = sum(cwnds) / len(cwnds)
+        fname = 'cwnd_' + configurations['model_version'] +'.csv'
+        with open(fname, 'a') as f:
+            f.write(f"{elapsed}, min={min(cwnds)}, max={max(cwnds)}, avg={avg_cwnd:.2f}\n")
+    else:
+        print(f"TCP cwnd: not found for {addr}")
+
+    end = time.time()
+    # Optional: mirror your timing log style if you want
+    # log.debug("Time taken to collect cwnd stats: {0}ms".format(np.round((end-start)*1000)))
+
+    return cwnds
 
 
 def worker(process_id, q):
@@ -255,12 +300,12 @@ def sample_transfer(params):
     current_cc = np.sum(process_status)
     for i in range(configurations["thread_limit"]):
         if i < params[0]:
-            if (i >= current_cc):
+            # if (i >= current_cc):
                 process_status[i] = 1
         else:
             process_status[i] = 0
 
-    log.debug("Active CC: {0}".format(np.sum(process_status)))
+    log.info("Active CC: {0}".format(np.sum(process_status)))
 
     time.sleep(1)
     prev_sc, prev_rc = tcp_stats()
@@ -273,7 +318,9 @@ def sample_transfer(params):
     sc, rc = curr_sc - prev_sc, curr_rc - prev_rc
 
     log.debug("TCP Segments >> Send Count: {0}, Retrans Count: {1}".format(sc, rc))
-    thrpt = np.mean(throughput_logs[-2:]) if len(throughput_logs) > 2 else 0
+    # thrpt = np.mean(throughput_logs[-2:]) if len(throughput_logs) > 2 else 0
+    seconds_to_consider = max(probing_time - 2, 2)
+    thrpt = np.mean(throughput_logs[-seconds_to_consider:]) if len(throughput_logs) > seconds_to_consider else 0
 
     lr, B, K = 0, int(configurations["B"]), float(configurations["K"])
     if sc != 0:
@@ -324,7 +371,7 @@ def run_transfer():
 
     elif configurations["method"].lower() == "gradient":
         log.info("Running Gradient Optimization .... ")
-        params = gradient_opt_fast(configurations['max_cc']['network'], sample_transfer, log)
+        params = gradient_opt_fast(configurations['thread_limit'], sample_transfer, log)
 
     elif configurations["method"].lower() == "cg":
         log.info("Running Conjugate Optimization .... ")
@@ -336,7 +383,7 @@ def run_transfer():
 
     else:
         log.info("Running Bayesian Optimization .... ")
-        params = gradient_opt_fast(configurations['max_cc']['network'], sample_transfer, log)
+        params = gradient_opt_fast(configurations['thread_limit'], sample_transfer, log)
 
 
     if file_incomplete.value > 0:
@@ -409,10 +456,9 @@ class PPOOptimizer:
         num_workers.value = params[0]
 
         current_cc = np.sum(process_status)
-        for i in range(configurations["max_cc"]['network']):
+        for i in range(configurations['thread_limit']):
             if i < params[0]:
-                if (i >= current_cc):
-                    process_status[i] = 1
+                process_status[i] = 1
             else:
                 process_status[i] = 0
 
@@ -519,6 +565,7 @@ def report_throughput(start_time):
                 time_since_begining, curr_thrpt, thrpt, m_avg))
 
             t2 = time.time()
+            tcp_stats_cwnd(time_since_begining)
             fname = 'timed_log_network_ppo_' + configurations['model_version'] +'.csv'
             with open(fname, 'a') as f:
                 f.write(f"{t2}, {time_since_begining}, {curr_thrpt}, {sum(process_status)}\n")
@@ -553,7 +600,9 @@ if __name__ == '__main__':
     root = configurations["data_dir"]
     probing_time = configurations["probing_sec"]
     file_names = os.listdir(root) * configurations["multiplier"]
+    # file_names = [f"{fname}-{i}" for fname in os.listdir(root) for i in range(1, configurations["multiplier"] + 1)]
     file_sizes = [os.path.getsize(root+filename) for filename in file_names]
+    # file_sizes = [os.path.getsize(os.path.join(root, fname.split('-')[0])) for fname in file_names]
     file_count = mp.Value("i",len(file_names))
     throughput_logs = manager.list()
 
@@ -561,7 +610,7 @@ if __name__ == '__main__':
     chunk_size = 1 * 1024 * 1024
     num_workers = mp.Value("i", 0)
     file_incomplete = mp.Value("i", file_count.value)
-    process_status = mp.Array("i", [0 for i in range(configurations["max_cc"]['network'])])
+    process_status = mp.Array("i", [0 for i in range(configurations['thread_limit'])])
     file_offsets = mp.Array("d", [0.0 for i in range(file_count.value)])
     cpus = manager.list()
 

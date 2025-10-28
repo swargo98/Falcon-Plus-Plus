@@ -37,7 +37,7 @@ class NetworkOptimizationEnv(gym.Env):
                                                 track_states=True)
         if simulator is not None:
             self.simulator = simulator
-        self.thread_limits = [1, 30]  # Threads can be between 1 and 10
+        self.thread_limits = [1, configurations['max_cc']['network']]  # Threads can be between 1 and 10
 
         # Continuous action space: adjustments between -5.0 and +5.0
         self.action_space = spaces.Box(low=np.array([self.thread_limits[0]]),
@@ -355,7 +355,7 @@ if __name__ == '__main__':
                                             track_states=True)
     env = NetworkOptimizationEnv(simulator=simulator)
     agent = PPOAgentContinuous(state_dim=2, action_dim=1, lr=1e-4, eps_clip=0.1)
-    rewards = train_ppo(env, agent, max_episodes=30000, optimal_reward=optimal_reward)
+    rewards = train_ppo(env, agent, max_episodes=300000, optimal_reward=optimal_reward)
     
     plot_rewards(rewards, 'PPO Training Rewards', 'training_rewards_'+ configurations['model_version'] +'.pdf')
     # simulator = NetworkSystemSimulator(network_throughput_per_thread=75,

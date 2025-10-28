@@ -1,26 +1,31 @@
 configurations = {
     "receiver": {
-        "host": "192.168.1.1",
+        "host": "192.168.1.2",
         "port": 50028
     },
     "max_file_chunk_in_MB": 512, # MB
-    "data_dir": "/mnt/nvme0n1/files_mixed/",
+    "data_dir": "/mnt/nvme0n1/uniform-64G/",
     "B": 10, # severity of the packet loss punishment
-    "K": 1.02, # cost of increasing concurrency
+    "K": 1.01, # cost of increasing concurrency
     "loglevel": "info",
     "probing_sec": 5, # probing interval in seconds
-    "network_limit": -1, # Network limit (Mbps) per thread
+    "network_limit": 3000, # Network limit (Mbps) per thread
     "io_limit": -1, # I/O limit (Mbps) per thread
     "fixed_probing": {
         "bsize": 10,
-        "thread": 3
+        "thread": 15
+    },
+    "bayes": {
+        "initial_run": 3,
+        "num_of_exp": -1 #-1 for infinite
     },
     "max_cc": {
-        "network": 20,
-        "io": 20,
+        "network": 100,
+        "io": 30,
     },
-    "method": "ppo", # options: [gradient, ppo]
-    "model_version": 'falcon_pp', # just a tag for the model
+    "file_transfer": False,
+    "method": "probe", # options: [gradient, ppo]
+    "model_version": 'heur_uniform_15', # just a tag for the model
     "mode": 'inference', # random or inference
 }
 
@@ -32,4 +37,4 @@ configurations.setdefault("inference_policy_model",
 configurations.setdefault("max_episodes",
                             6 if configurations["mode"] == "random" else 20000)
 configurations.setdefault("multiplier",
-                            20 if configurations["mode"] == "random" else 1)
+                            20 if configurations["mode"] == "random" else 16)

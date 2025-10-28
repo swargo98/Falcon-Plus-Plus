@@ -1,7 +1,7 @@
 import pandas as pd, pathlib, math
 def extract_log_metrics(model_version: str,
-                        top_tppt: int = 101,
-                        top_tp: int = 11,
+                        top_tppt: int = 51,
+                        top_tp: int = 101,
                         top_mem: int = 101,
                         base_dir: str = ".") -> dict:
     """
