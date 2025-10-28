@@ -35,7 +35,9 @@ else:
 def worker(sock, process_num):
     while True:
         try:
+            # print(process_num)
             client, address = sock.accept()
+            client.settimeout(None)
             log.info("{u} connected".format(u=address))
             process_status[process_num] = 1
             total = 0
@@ -79,19 +81,30 @@ def worker(sock, process_num):
 
                     os.close(fd)
                 else:
-                    chunk = client.recv(chunk_size.value)
-                    while chunk:
-                        chunk = client.recv(chunk_size.value)
+                    # print(process_num, header)
+                    file_stats = header.split(",")
+                    filename, offset, to_rcv = str(file_stats[0]), int(file_stats[1]), int(file_stats[2])
+                    remaining = to_rcv
+                    while remaining > 0:
+                        chunk = client.recv(min(chunk_size.value, remaining))
+                        if not chunk:
+                            raise RuntimeError(f"peer closed with {remaining} bytes remaining")
+                        remaining -= len(chunk)
 
                 # d = client.recv(1).decode()
 
             total = np.round(total/(1024*1024))
             log.info("{u} exited. total received {d} MB".format(u=address, d=total))
-            client.close()
-            process_status[process_num] = 0
+            # client.close()
+            # process_status[process_num] = 0
         except Exception as e:
             log.error(f"{str(process_num)}, {str(e)}")
             # raise e
+        finally:
+            try: client.shutdown(socket.SHUT_RDWR)
+            except OSError: pass
+            try: client.close()
+            except OSError: pass
 
 
 def report_throughput():
@@ -137,11 +150,16 @@ if __name__ == '__main__':
     if "file_transfer" in configurations and configurations["file_transfer"] is not None:
         file_transfer = configurations["file_transfer"]
 
-    num_workers = min(max(1,configurations["max_cc"]), configurations["cpu_count"])
+    num_workers = max(1,configurations["max_cc"])
 
-    sock = socket.socket()
+    # sock = socket.socket()
+    # sock.bind((HOST, PORT))
+    # sock.listen(num_workers)
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind((HOST, PORT))
-    sock.listen(num_workers)
+    sock.listen(256)
 
     iter = 0
     while iter<1:
@@ -166,7 +184,8 @@ if __name__ == '__main__':
         # reporting_process.start()
 
         while sum(process_status) > 0:
-            time.sleep(0.1)
+            log.info(f"Total active workers: {sum(process_status)}")
+            time.sleep(1)
 
         # reporting_process.terminate()
         for p in workers:

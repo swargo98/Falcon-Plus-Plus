@@ -225,7 +225,7 @@ def worker(sock, process_num):
             total_mb = np.round(total / (1024 * 1024))
             log.info("%s exited. total received %s MB", address, total_mb)
             client.close()
-            process_status[process_num] = 0
+            # process_status[process_num] = 0
         except Exception as e:
             log.error(str(e))
             # raise e
@@ -272,7 +272,7 @@ if __name__ == '__main__':
     if "file_transfer" in configurations and configurations["file_transfer"] is not None:
         file_transfer = configurations["file_transfer"]
 
-    num_workers = min(max(1,configurations["max_cc"]), configurations["cpu_count"])
+    num_workers = configurations["max_cc"]
 
     sock = socket.socket()
     sock.bind((HOST, PORT))
