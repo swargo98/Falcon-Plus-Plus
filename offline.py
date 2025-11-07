@@ -348,7 +348,7 @@ if __name__ == '__main__':
 
     optimal_network_thread = network_bandwidth/network_throughput_per_thread
 
-    optimal_reward = network_bandwidth * (1/(configurations['K']**optimal_network_thread))
+    optimal_reward = network_bandwidth * (1/(1.002**optimal_network_thread))
 
     simulator = NetworkSystemSimulator(network_throughput_per_thread=network_throughput_per_thread,
                                             network_bandwidth=network_bandwidth,

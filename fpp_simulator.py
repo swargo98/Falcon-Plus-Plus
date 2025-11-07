@@ -30,7 +30,7 @@ class NetworkSystemSimulator:
         self.network_background_traffic = network_background_traffic
         self.network_thread = network_thread
         self.track_states = track_states
-        self.K = configurations['K']
+        self.K = 1.002
 
     def network_thread_task(self, time, remaining_bw_per_thread):
         throughput_increase = 0

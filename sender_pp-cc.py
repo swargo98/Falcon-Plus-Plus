@@ -177,10 +177,6 @@ def worker(process_id, q):
             log.debug("Start Process :: {0}".format(process_id))
             sock = None
             try:
-                sock = socket.socket()
-                sock.settimeout(3)
-                sock.connect((HOST, PORT))
-
                 while (not q.empty()) and (process_status[process_id] == 1):
                     try:
                         # print("Queue size: {0}".format(q.qsize()))
@@ -195,6 +191,10 @@ def worker(process_id, q):
                     filename_rel = file_names[file_id]
                     filename_abs = os.path.join(root, filename_rel)
                     total_size = int(file_sizes[file_id])
+
+                    sock = socket.socket()
+                    sock.settimeout(3)
+                    sock.connect((HOST, PORT))
 
                     network_limit = configurations['network_limit']
                     if network_limit>0:
@@ -273,7 +273,7 @@ def worker(process_id, q):
                         #     filename_rel, start_offset, chunk_len))
                         _mark_chunk_done(file_id)
 
-                sock.close()
+                    sock.close()
 
             except socket.timeout as e:
                 pass
