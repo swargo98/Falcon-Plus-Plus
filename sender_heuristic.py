@@ -181,6 +181,12 @@ def worker(process_id, q):
                 sock.settimeout(3)
                 sock.connect((HOST, PORT))
 
+                network_limit = configurations['network_limit']
+                if network_limit>0:
+                    target, factor = network_limit, 8
+                    max_speed = (target * 1024 * 1024)/8
+                    second_target, second_data_count = int(max_speed/factor), 0
+
                 while (not q.empty()) and (process_status[process_id] == 1):
                     try:
                         # print("Queue size: {0}".format(q.qsize()))
@@ -196,11 +202,11 @@ def worker(process_id, q):
                     filename_abs = os.path.join(root, filename_rel)
                     total_size = int(file_sizes[file_id])
 
-                    network_limit = configurations['network_limit']
-                    if network_limit>0:
-                        target, factor = network_limit, 8
-                        max_speed = (target * 1024 * 1024)/8
-                        second_target, second_data_count = int(max_speed/factor), 0
+                    # network_limit = configurations['network_limit']
+                    # if network_limit>0:
+                    #     target, factor = network_limit, 8
+                    #     max_speed = (target * 1024 * 1024)/8
+                    #     second_target, second_data_count = int(max_speed/factor), 0
 
                     # print("Sending file: {0}, offset: {1}, size: {2}".format(
                     #     filename_rel, start_offset, chunk_len))

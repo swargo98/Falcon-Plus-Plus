@@ -175,6 +175,11 @@ def worker(process_id, q):
         log.debug("Start Process :: %d", process_id)
 
         try:
+            network_limit = configurations['network_limit']
+            if network_limit>0:
+                target, factor = network_limit, 8
+                max_speed = (target * 1024 * 1024)/8
+                second_target, second_data_count = int(max_speed/factor), 0
             while (not q.empty()) and (process_status[process_id] == 1):
                 try:
                     file_id = q.get_nowait()
@@ -209,12 +214,12 @@ def worker(process_id, q):
                     sock.sendall(msg.encode("ascii"))
 
                     factor = 8
-                    if configurations['network_limit'] > 0:
-                        target = configurations['network_limit']  # Mbps
-                        max_speed_bps = (target * 1024 * 1024) // 8
-                        second_target = int(max_speed_bps / factor)
-                        second_data_count = 0
-                        timer = time.time()
+                    # if configurations['network_limit'] > 0:
+                    #     target = configurations['network_limit']  # Mbps
+                    #     max_speed_bps = (target * 1024 * 1024) // 8
+                    #     second_target = int(max_speed_bps / factor)
+                    #     second_data_count = 0
+                    #     timer = time.time()
 
                     remaining = to_send
                     while remaining > 0 and process_status[process_id] == 1:
@@ -630,6 +635,9 @@ def report_throughput(start_time):
     while file_incomplete.value > 0:
         t1 = time.time()
         elapsed = np.round(t1 - start_time, 1)
+
+        if elapsed >= 30 and sum(throughput_logs[-30:]) == 0:
+            file_incomplete.value = 0
 
         total_bytes = np.sum(file_offsets)
         curr_total = total_bytes - previous_total
