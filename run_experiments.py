@@ -39,10 +39,10 @@ LOGS_DIR = ROOT / "logs"
 
 # Dataset mapping
 DATASETS = {
-    # "1MB": "/dev/shm/abl-1MB/",
-    # "32MB": "/dev/shm/abl-32MB/",
-    "1024MB": "/dev/shm/abl-1024MB/",
-    # "2048MB": "/dev/shm/abl-2048MB/",
+    "1MB": "/mnt/nvme0n1/abl-1MB/",
+    "32MB": "/mnt/nvme0n1/abl-32MB/",
+    # "1024MB": "/mnt/nvme0n1/abl-1024MB/",
+    "2048MB": "/mnt/nvme0n1/abl-2048MB/",
 }
 
 # Each experiment: id, p, pp, cc_values, script
